@@ -1,0 +1,6 @@
+Create a new python3 virutal env called .venv in the current directory. Activate virtual env. Install required packages.
+Here are Rodneys emails:
+Hi David,
+
+If you have time, could you ask Claude to convert this 2.7 python to new python code? 
+These M15 files need to go into the to_import folder, and get loaded into a Sqlite3 database
