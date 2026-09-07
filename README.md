@@ -88,3 +88,7 @@ This started as a Python 2.7 script that no longer ran. Rodney's email:
 > python code?
 > These M15 files need to go into the to_import folder, and get loaded into a
 > Sqlite3 database
+
+[HANDOVER.md](HANDOVER.md) is the reply: what changed, what was wrong with the
+original, and two behaviours worth a second opinion — that a re-import
+overwrites, and that no history of earlier magnitudes is kept.
