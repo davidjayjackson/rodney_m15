@@ -1,4 +1,4 @@
-# NGC 7078 (M15) photometry importer
+![NGC 7078 — M15 Sloan g photometry importer](branding/banner.png)
 
 Loads AAVSO extended-format photometry reports into a SQLite database.
 
@@ -62,6 +62,19 @@ survive — the table keeps no history of earlier measurements.
 
 The `#TYPE=EXTENDED` and `#NAME,DATE,...` header lines at the top of each report
 are skipped, not treated as errors.
+
+## Branding
+
+`branding/make_branding.py` regenerates the logo and banner from the database.
+Each of the 241 dots is one star, sized by its real mean magnitude; the
+positions are synthetic, since the AAVSO reports carry no coordinates.
+
+```sh
+python branding/make_branding.py
+```
+
+That writes the SVGs. The PNGs alongside them were rendered from those with
+headless Edge.
 
 ## Background
 
