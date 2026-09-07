@@ -33,6 +33,10 @@ FIELDS = [
 # Columns stored as REAL; everything else is TEXT.
 NUMERIC_FIELDS = {'DATE', 'MAG', 'MERR', 'CMAG', 'KMAG', 'AMASS', 'GROUP'}
 
+# Natural key: one measurement of one star, at one Julian date, in one filter.
+# Enforced by a unique index so a re-import cannot duplicate rows.
+UNIQUE_FIELDS = ['STARNAME', 'DATE', 'FILT']
+
 # AAVSO uses these placeholders for "not applicable"; store them as NULL.
 NULL_TOKENS = {'', 'NA', 'N/A', '-'}
 
@@ -65,17 +69,38 @@ class DataLine:
 
 
 def setup_db(database):
-    """Create the table if it does not already exist."""
+    """Create the table and its unique index if they do not already exist.
+
+    The index is created separately rather than as a table constraint so that
+    databases built by an earlier version of this script pick it up too.
+    """
     columns = ', '.join(
         '"%s" %s' % (name, 'real' if name in NUMERIC_FIELDS else 'text')
         for name in FIELDS
     )
     database.execute('create table if not exists "%s" (%s)' % (TABLE_NAME, columns))
+
+    key = ', '.join('"%s"' % name for name in UNIQUE_FIELDS)
+    try:
+        database.execute(
+            'create unique index if not exists "%s_key" on "%s" (%s)'
+            % (TABLE_NAME, TABLE_NAME, key)
+        )
+    except sqlite3.IntegrityError:
+        raise SystemExit(
+            'Cannot add the unique index: %s already holds rows that duplicate\n'
+            'on (%s). Deduplicate the table before re-running.'
+            % (TABLE_NAME, ', '.join(UNIQUE_FIELDS))
+        )
     database.commit()
 
 
 def import_file(database, file_path):
-    """Insert every data line of ``file_path``.  Returns (successes, failures)."""
+    """Insert every data line of ``file_path``.
+
+    Returns (inserted, duplicates, failures).  Rows already present under the
+    unique key are skipped rather than duplicated.
+    """
     print('... importing %s ...' % file_path.name)
     rows = []
     failures = 0
@@ -92,11 +117,17 @@ def import_file(database, file_path):
                 print('    line %d skipped (%s): %s' % (line_number, error, ','.join(values)))
 
     placeholders = ', '.join('?' * len(FIELDS))
+    before = database.total_changes
     database.executemany(
-        'insert into "%s" values (%s)' % (TABLE_NAME, placeholders), rows
+        'insert or ignore into "%s" values (%s)' % (TABLE_NAME, placeholders), rows
     )
     database.commit()
-    return len(rows), failures
+
+    inserted = database.total_changes - before
+    duplicates = len(rows) - inserted
+    if duplicates:
+        print('    %d row(s) already in the database, skipped' % duplicates)
+    return inserted, duplicates, failures
 
 
 def main(argv=None):
@@ -130,23 +161,26 @@ def main(argv=None):
     print('Files to import: %s' % ', '.join(p.name for p in files))
 
     success = 0
+    duplicates = 0
     failures = 0
     start_time = datetime.datetime.now()
 
     with sqlite3.connect(args.project_path / DATABASE_NAME) as database:
         setup_db(database)
         for file_path in files:
-            imported, failed = import_file(database, file_path)
+            imported, skipped, failed = import_file(database, file_path)
             success += imported
+            duplicates += skipped
             failures += failed
             if not args.keep:
                 file_path.replace(imported_folder / file_path.name)
 
     elapsed = (datetime.datetime.now() - start_time).total_seconds()
-    total = success + failures
+    total = success + duplicates + failures
     ratio = failures / total if total else 0.0
     print('Time to import = %.1f seconds' % elapsed)
-    print('Success = %d, Failures = %d, ratio = %.7f' % (success, failures, ratio))
+    print('Success = %d, Duplicates = %d, Failures = %d, ratio = %.7f'
+          % (success, duplicates, failures, ratio))
     return 0
 
 
