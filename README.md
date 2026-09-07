@@ -65,6 +65,8 @@ are skipped, not treated as errors.
 
 ## Branding
 
+<img src="branding/logo.png" alt="NGC 7078 logo: a dense star cluster on a dark disc" width="180">
+
 `branding/make_branding.py` regenerates the logo and banner from the database.
 Each of the 241 dots is one star, sized by its real mean magnitude; the
 positions are synthetic, since the AAVSO reports carry no coordinates.
