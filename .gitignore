@@ -4,8 +4,8 @@
 # Generated database
 *.sqlite
 
-# Email drafts
-email_to_rodney*.md
+# Long-form email draft (the short version is tracked)
+email_to_rodney.md
 
 # Python bytecode
 __pycache__/
