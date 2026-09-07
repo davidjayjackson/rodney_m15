@@ -95,11 +95,30 @@ def setup_db(database):
     database.commit()
 
 
+def upsert_sql():
+    """INSERT that overwrites the non-key columns when the row already exists.
+
+    Lets a reprocessed stack correct the magnitudes of an earlier import
+    instead of being discarded as a duplicate.
+    """
+    placeholders = ', '.join('?' * len(FIELDS))
+    key = ', '.join('"%s"' % name for name in UNIQUE_FIELDS)
+    assignments = ', '.join(
+        '"%s" = excluded."%s"' % (name, name)
+        for name in FIELDS if name not in UNIQUE_FIELDS
+    )
+    return (
+        'insert into "%s" values (%s) on conflict (%s) do update set %s'
+        % (TABLE_NAME, placeholders, key, assignments)
+    )
+
+
 def import_file(database, file_path):
     """Insert every data line of ``file_path``.
 
-    Returns (inserted, duplicates, failures).  Rows already present under the
-    unique key are skipped rather than duplicated.
+    Returns (inserted, updated, failures).  A row whose (STARNAME, DATE, FILT)
+    is already present has its remaining columns overwritten with the new
+    values.
     """
     print('... importing %s ...' % file_path.name)
     rows = []
@@ -116,18 +135,20 @@ def import_file(database, file_path):
                 failures += 1
                 print('    line %d skipped (%s): %s' % (line_number, error, ','.join(values)))
 
-    placeholders = ', '.join('?' * len(FIELDS))
-    before = database.total_changes
-    database.executemany(
-        'insert or ignore into "%s" values (%s)' % (TABLE_NAME, placeholders), rows
-    )
+    # total_changes counts inserts and updates together, so the growth in row
+    # count tells us how many of those changes were new rows.
+    count_sql = 'select count(*) from "%s"' % TABLE_NAME
+    rows_before = database.execute(count_sql).fetchone()[0]
+    changes_before = database.total_changes
+
+    database.executemany(upsert_sql(), rows)
     database.commit()
 
-    inserted = database.total_changes - before
-    duplicates = len(rows) - inserted
-    if duplicates:
-        print('    %d row(s) already in the database, skipped' % duplicates)
-    return inserted, duplicates, failures
+    inserted = database.execute(count_sql).fetchone()[0] - rows_before
+    updated = (database.total_changes - changes_before) - inserted
+    if updated:
+        print('    %d row(s) already present, updated in place' % updated)
+    return inserted, updated, failures
 
 
 def main(argv=None):
@@ -161,26 +182,26 @@ def main(argv=None):
     print('Files to import: %s' % ', '.join(p.name for p in files))
 
     success = 0
-    duplicates = 0
+    updates = 0
     failures = 0
     start_time = datetime.datetime.now()
 
     with sqlite3.connect(args.project_path / DATABASE_NAME) as database:
         setup_db(database)
         for file_path in files:
-            imported, skipped, failed = import_file(database, file_path)
+            imported, refreshed, failed = import_file(database, file_path)
             success += imported
-            duplicates += skipped
+            updates += refreshed
             failures += failed
             if not args.keep:
                 file_path.replace(imported_folder / file_path.name)
 
     elapsed = (datetime.datetime.now() - start_time).total_seconds()
-    total = success + duplicates + failures
+    total = success + updates + failures
     ratio = failures / total if total else 0.0
     print('Time to import = %.1f seconds' % elapsed)
-    print('Success = %d, Duplicates = %d, Failures = %d, ratio = %.7f'
-          % (success, duplicates, failures, ratio))
+    print('Success = %d, Updated = %d, Failures = %d, ratio = %.7f'
+          % (success, updates, failures, ratio))
     return 0
 
 
