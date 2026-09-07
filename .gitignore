@@ -4,6 +4,9 @@
 # Generated database
 *.sqlite
 
+# Email drafts
+email_to_rodney.md
+
 # Python bytecode
 __pycache__/
 *.py[cod]
