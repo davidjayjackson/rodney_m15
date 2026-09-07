@@ -1,0 +1,9 @@
+# Virtual environment
+.venv/
+
+# Generated database
+*.sqlite
+
+# Python bytecode
+__pycache__/
+*.py[cod]
