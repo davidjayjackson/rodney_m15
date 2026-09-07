@@ -5,7 +5,7 @@
 *.sqlite
 
 # Email drafts
-email_to_rodney.md
+email_to_rodney*.md
 
 # Python bytecode
 __pycache__/
