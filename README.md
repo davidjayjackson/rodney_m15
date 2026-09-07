@@ -11,7 +11,7 @@ JD 2455500.76.
 
 | Path | |
 |---|---|
-| `import_NGC7078_Sloan_SG.py` | the importer |
+| `import_NGC7078_Sloan_SG_v2_0.py` | the importer |
 | `to_import/` | drop new report files here |
 | `imported/` | files are moved here once loaded |
 | `NGC7078.sqlite` | the database — generated, not in git |
@@ -33,7 +33,7 @@ No packages to install. The script uses only the standard library (`sqlite3`,
 ## Running it
 
 ```sh
-python import_NGC7078_Sloan_SG.py
+python import_NGC7078_Sloan_SG_v2_0.py
 ```
 
 Every file in `to_import/` that is not already in `imported/` gets loaded, then
@@ -46,10 +46,23 @@ Options:
 |---|---|
 | `--keep` | leave files in `to_import/` instead of moving them |
 | `--project-path PATH` | use a different folder for `to_import/`, `imported/` and the database (defaults to the script's folder) |
+| `--database FILE` | write to a different SQLite file (defaults to `NGC7078.sqlite`) |
+| `--table NAME` | write to a different table (defaults to `Sloan_SG`) |
+
+Use `--database` and `--table` together to keep another cluster in its own
+database, from the same copy of the script:
+
+```
+python import_NGC7078_Sloan_SG_v2_0.py --project-path ~/Desktop/m71 --database M71.sqlite --table Sloan_SG
+```
+
+Files whose names start with a dot are ignored, so the `.DS_Store` that macOS
+leaves in every folder is never mistaken for a report. A file that turns out
+not to be text is reported and left in `to_import/`; the rest still import.
 
 ## How the data is stored
 
-Everything goes into one table, `Sloan_SG`, with the 15 columns of the AAVSO
+Everything goes into one table, `Sloan_SG` by default, with the 15 columns of the AAVSO
 extended format: `STARNAME`, `DATE`, `MAG`, `MERR`, `FILT`, `TRANS`, `MTYPE`,
 `CNAME`, `CMAG`, `KNAME`, `KMAG`, `AMASS`, `GROUP`, `CHART`, `NOTES`. `DATE` is
 a Julian date. Numeric columns are stored as `REAL`; AAVSO `NA` placeholders

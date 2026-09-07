@@ -5,9 +5,10 @@ Files dropped in ``to_import/`` are parsed line by line and inserted into the
 to ``imported/`` so the next run only picks up new files.
 
 Usage:
-    python import_NGC7078_Sloan_SG.py
-    python import_NGC7078_Sloan_SG.py --keep      # leave files in to_import/
-    python import_NGC7078_Sloan_SG.py --project-path /some/other/m15
+    python import_NGC7078_Sloan_SG_v2_0.py
+    python import_NGC7078_Sloan_SG_v2_0.py --keep      # leave files in to_import/
+    python import_NGC7078_Sloan_SG_v2_0.py --project-path /some/other/m15
+    python import_NGC7078_Sloan_SG_v2_0.py --database M71.sqlite --table Sloan_SG
 """
 
 import argparse
@@ -21,8 +22,10 @@ from pathlib import Path
 # Resolved from the script's own location so it works from any working directory.
 PROJECT_HOME = Path(__file__).resolve().parent
 
-DATABASE_NAME = 'NGC7078.sqlite'
-TABLE_NAME = 'Sloan_SG'
+# Defaults for --database and --table; both are overridable per run so one
+# copy of the script can serve several clusters.
+DEFAULT_DATABASE = 'NGC7078.sqlite'
+DEFAULT_TABLE = 'Sloan_SG'
 
 # The 15 columns of an AAVSO extended-format report, in file order.
 FIELDS = [
@@ -39,6 +42,16 @@ UNIQUE_FIELDS = ['STARNAME', 'DATE', 'FILT']
 
 # AAVSO uses these placeholders for "not applicable"; store them as NULL.
 NULL_TOKENS = {'', 'NA', 'N/A', '-'}
+
+# Rows are written in chunks of this size rather than accumulating the whole
+# file in memory.  The commit still happens once per file, so a file is all or
+# nothing regardless of how many chunks it took.
+BATCH_SIZE = 5000
+
+
+def quote(name):
+    """Quote an SQL identifier, so a name given on the command line is safe."""
+    return '"%s"' % name.replace('"', '""')
 
 
 class DataLine:
@@ -68,7 +81,7 @@ class DataLine:
         return tuple(row)
 
 
-def setup_db(database):
+def setup_db(database, table):
     """Create the table and its unique index if they do not already exist.
 
     The index is created separately rather than as a table constraint so that
@@ -78,42 +91,44 @@ def setup_db(database):
         '"%s" %s' % (name, 'real' if name in NUMERIC_FIELDS else 'text')
         for name in FIELDS
     )
-    database.execute('create table if not exists "%s" (%s)' % (TABLE_NAME, columns))
+    database.execute(
+        'create table if not exists %s (%s)' % (quote(table), columns)
+    )
 
-    key = ', '.join('"%s"' % name for name in UNIQUE_FIELDS)
+    key = ', '.join(quote(name) for name in UNIQUE_FIELDS)
     try:
         database.execute(
-            'create unique index if not exists "%s_key" on "%s" (%s)'
-            % (TABLE_NAME, TABLE_NAME, key)
+            'create unique index if not exists %s on %s (%s)'
+            % (quote('%s_key' % table), quote(table), key)
         )
     except sqlite3.IntegrityError:
         raise SystemExit(
             'Cannot add the unique index: %s already holds rows that duplicate\n'
             'on (%s). Deduplicate the table before re-running.'
-            % (TABLE_NAME, ', '.join(UNIQUE_FIELDS))
+            % (table, ', '.join(UNIQUE_FIELDS))
         )
     database.commit()
 
 
-def upsert_sql():
+def upsert_sql(table):
     """INSERT that overwrites the non-key columns when the row already exists.
 
     Lets a reprocessed stack correct the magnitudes of an earlier import
     instead of being discarded as a duplicate.
     """
     placeholders = ', '.join('?' * len(FIELDS))
-    key = ', '.join('"%s"' % name for name in UNIQUE_FIELDS)
+    key = ', '.join(quote(name) for name in UNIQUE_FIELDS)
     assignments = ', '.join(
-        '"%s" = excluded."%s"' % (name, name)
+        '%s = excluded.%s' % (quote(name), quote(name))
         for name in FIELDS if name not in UNIQUE_FIELDS
     )
     return (
-        'insert into "%s" values (%s) on conflict (%s) do update set %s'
-        % (TABLE_NAME, placeholders, key, assignments)
+        'insert into %s values (%s) on conflict (%s) do update set %s'
+        % (quote(table), placeholders, key, assignments)
     )
 
 
-def import_file(database, file_path):
+def import_file(database, table, file_path):
     """Insert every data line of ``file_path``.
 
     Returns (inserted, updated, failures).  A row whose (STARNAME, DATE, FILT)
@@ -121,8 +136,16 @@ def import_file(database, file_path):
     values.
     """
     print('... importing %s ...' % file_path.name)
-    rows = []
     failures = 0
+    batch = []
+
+    # total_changes counts inserts and updates together, so the growth in row
+    # count tells us how many of those changes were new rows.  Both readings
+    # are taken before the first write.
+    count_sql = 'select count(*) from %s' % quote(table)
+    rows_before = database.execute(count_sql).fetchone()[0]
+    changes_before = database.total_changes
+    sql = upsert_sql(table)
 
     with file_path.open(newline='', encoding='utf-8-sig') as data_file:
         for line_number, values in enumerate(csv.reader(data_file), start=1):
@@ -130,18 +153,17 @@ def import_file(database, file_path):
             if not values or not values[0].strip() or values[0].lstrip().startswith('#'):
                 continue
             try:
-                rows.append(DataLine(values).as_row())
+                batch.append(DataLine(values).as_row())
             except (ValueError, TypeError) as error:
                 failures += 1
                 print('    line %d skipped (%s): %s' % (line_number, error, ','.join(values)))
+                continue
+            if len(batch) >= BATCH_SIZE:
+                database.executemany(sql, batch)
+                batch.clear()
 
-    # total_changes counts inserts and updates together, so the growth in row
-    # count tells us how many of those changes were new rows.
-    count_sql = 'select count(*) from "%s"' % TABLE_NAME
-    rows_before = database.execute(count_sql).fetchone()[0]
-    changes_before = database.total_changes
-
-    database.executemany(upsert_sql(), rows)
+    if batch:
+        database.executemany(sql, batch)
     database.commit()
 
     inserted = database.execute(count_sql).fetchone()[0] - rows_before
@@ -158,21 +180,37 @@ def main(argv=None):
         help='folder holding to_import/, imported/ and the database (default: %(default)s)',
     )
     parser.add_argument(
+        '--database', default=DEFAULT_DATABASE,
+        help='SQLite file to write, absolute or relative to --project-path '
+             '(default: %(default)s)',
+    )
+    parser.add_argument(
+        '--table', default=DEFAULT_TABLE,
+        help='table to write the measurements into (default: %(default)s)',
+    )
+    parser.add_argument(
         '--keep', action='store_true',
         help='do not move files to imported/ after a successful import',
     )
     args = parser.parse_args(argv)
+
+    database_path = Path(args.database)
+    if not database_path.is_absolute():
+        database_path = args.project_path / database_path
 
     to_import_folder = args.project_path / 'to_import'
     imported_folder = args.project_path / 'imported'
     to_import_folder.mkdir(exist_ok=True)
     imported_folder.mkdir(exist_ok=True)
 
-    # New files are the ones not yet moved over to imported/.
+    # New files are the ones not yet moved over to imported/.  Dot-files are
+    # skipped: macOS leaves a binary .DS_Store in every folder Finder opens.
     already_imported = {p.name for p in imported_folder.iterdir() if p.is_file()}
     files = sorted(
         p for p in to_import_folder.iterdir()
-        if p.is_file() and p.name not in already_imported
+        if p.is_file()
+        and not p.name.startswith('.')
+        and p.name not in already_imported
     )
 
     if not files:
@@ -180,16 +218,28 @@ def main(argv=None):
         return 0
 
     print('Files to import: %s' % ', '.join(p.name for p in files))
+    print('Writing to %s, table %s' % (database_path, args.table))
 
     success = 0
     updates = 0
     failures = 0
+    unreadable = []
     start_time = datetime.datetime.now()
 
-    with sqlite3.connect(args.project_path / DATABASE_NAME) as database:
-        setup_db(database)
+    with sqlite3.connect(database_path) as database:
+        setup_db(database, args.table)
         for file_path in files:
-            imported, refreshed, failed = import_file(database, file_path)
+            # One unreadable file should not abandon the files after it.  Its
+            # partial writes are rolled back and it stays in to_import/.
+            try:
+                imported, refreshed, failed = import_file(
+                    database, args.table, file_path
+                )
+            except (UnicodeDecodeError, csv.Error) as error:
+                database.rollback()
+                unreadable.append(file_path.name)
+                print('    not a text report, skipped (%s)' % error)
+                continue
             success += imported
             updates += refreshed
             failures += failed
@@ -202,6 +252,9 @@ def main(argv=None):
     print('Time to import = %.1f seconds' % elapsed)
     print('Success = %d, Updated = %d, Failures = %d, ratio = %.7f'
           % (success, updates, failures, ratio))
+    if unreadable:
+        print('Left in %s: %s' % (to_import_folder, ', '.join(unreadable)))
+        return 1
     return 0
 
 
