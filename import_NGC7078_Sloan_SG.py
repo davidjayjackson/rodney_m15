@@ -17,6 +17,10 @@ import sqlite3
 import sys
 from pathlib import Path
 
+# Project home: the folder holding to_import/, imported/ and the database.
+# Resolved from the script's own location so it works from any working directory.
+PROJECT_HOME = Path(__file__).resolve().parent
+
 DATABASE_NAME = 'NGC7078.sqlite'
 TABLE_NAME = 'Sloan_SG'
 
@@ -98,8 +102,8 @@ def import_file(database, file_path):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
-        '--project-path', type=Path, default=Path(__file__).resolve().parent,
-        help='folder holding to_import/, imported/ and the database (default: this script\'s folder)',
+        '--project-path', type=Path, default=PROJECT_HOME,
+        help='folder holding to_import/, imported/ and the database (default: %(default)s)',
     )
     parser.add_argument(
         '--keep', action='store_true',
