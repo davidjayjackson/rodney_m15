@@ -66,4 +66,25 @@ separate table inside the M15 one. Separate files are tidier if the two datasets
 never get compared; one file with two tables is easier if you ever want to query
 across both. Either works — say which and I'll set it up.
 
+Last thing: I tightened up what the script will accept as a report, since
+`.DS_Store` got as far as it did.
+
+- **Only `.csv` and `.txt` are read.** Anything else is listed as ignored
+  rather than passed over in silence, so a report saved under an odd extension
+  can't quietly go missing. Your M15 reports are `.txt` and the M71 ones are
+  `.csv`, so both are covered.
+- **A file has to declare `#TYPE=EXTENDED`.** That's what catches a CSV that
+  isn't an AAVSO report at all.
+- **A file only moves to `imported/` if it actually loaded a row.** Before, a
+  file whose every line failed was still moved and looked dealt with.
+
+Anything rejected is named in the output and left in `to_import/`, and the run
+ends with an error code — so a skipped file can't hide inside a summary that
+otherwise reads clean.
+
+Both your M71 files went through cleanly when I tested them here: 241 rows
+between the two, no failures, SG and SR filters. The two-colour transformation
+report turns out to be the same 15-column layout as the time series, so it
+imports the same way.
+
 David

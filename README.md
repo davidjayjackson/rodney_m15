@@ -56,9 +56,23 @@ database, from the same copy of the script:
 python import_NGC7078_Sloan_SG_v2_0.py --project-path ~/Desktop/m71 --database M71.sqlite --table Sloan_SG
 ```
 
-Files whose names start with a dot are ignored, so the `.DS_Store` that macOS
-leaves in every folder is never mistaken for a report. A file that turns out
-not to be text is reported and left in `to_import/`; the rest still import.
+### What counts as a report
+
+A file in `to_import/` is imported only if it is a `.csv` or `.txt` whose
+header declares `#TYPE=EXTENDED`. Everything else is named in the output and
+left where it is:
+
+| | |
+|---|---|
+| dot-files | ignored silently — this is the `.DS_Store` macOS leaves in every folder |
+| other extensions | listed as ignored, not treated as reports |
+| no `#TYPE=EXTENDED` | skipped, left in `to_import/` |
+| not readable as text | skipped, left in `to_import/` |
+| imported zero rows | left in `to_import/`, so a file that failed every line does not look dealt with |
+
+Only a file that lands at least one row moves to `imported/`. One bad file
+never stops the run — the others still import, and the script exits non-zero
+listing whatever it left behind.
 
 ## How the data is stored
 

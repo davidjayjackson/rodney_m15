@@ -1,8 +1,10 @@
 """Load AAVSO extended-format photometry reports for NGC 7078 (M15) into SQLite.
 
-Files dropped in ``to_import/`` are parsed line by line and inserted into the
-``Sloan_SG`` table of ``NGC7078.sqlite``.  A file that imports cleanly is moved
-to ``imported/`` so the next run only picks up new files.
+The ``.csv`` and ``.txt`` files dropped in ``to_import/`` are parsed line by
+line and inserted into the ``Sloan_SG`` table of ``NGC7078.sqlite``.  A file
+must declare ``#TYPE=EXTENDED``, and one that imports at least one row is moved
+to ``imported/`` so the next run only picks up new files.  Anything else is
+named in the output and left where it is.
 
 Usage:
     python import_NGC7078_Sloan_SG_v2_0.py
@@ -47,6 +49,33 @@ NULL_TOKENS = {'', 'NA', 'N/A', '-'}
 # file in memory.  The commit still happens once per file, so a file is all or
 # nothing regardless of how many chunks it took.
 BATCH_SIZE = 5000
+
+# Reports arrive as .csv or .txt; anything else in to_import/ is left alone.
+ALLOWED_SUFFIXES = {'.csv', '.txt'}
+
+
+class FormatError(Exception):
+    """The file is readable but is not an AAVSO extended-format report."""
+
+
+def check_format(file_path):
+    """Raise FormatError unless the file declares the AAVSO extended format.
+
+    Only the leading ``#`` directives are read; the first data line ends the
+    scan.  VPhot pads them out to the full column count, so ``#TYPE=EXTENDED``
+    arrives as ``#TYPE=EXTENDED,,,,,,,,,,,,,,``.
+    """
+    with file_path.open(newline='', encoding='utf-8-sig') as data_file:
+        for line in data_file:
+            line = line.strip()
+            if not line:
+                continue
+            if not line.startswith('#'):
+                break
+            directive = line.lstrip('#').split(',')[0].replace(' ', '').upper()
+            if directive == 'TYPE=EXTENDED':
+                return
+    raise FormatError('no #TYPE=EXTENDED header')
 
 
 def quote(name):
@@ -206,12 +235,23 @@ def main(argv=None):
     # New files are the ones not yet moved over to imported/.  Dot-files are
     # skipped: macOS leaves a binary .DS_Store in every folder Finder opens.
     already_imported = {p.name for p in imported_folder.iterdir() if p.is_file()}
-    files = sorted(
-        p for p in to_import_folder.iterdir()
-        if p.is_file()
-        and not p.name.startswith('.')
-        and p.name not in already_imported
-    )
+    files = []
+    ignored = []
+    for candidate in sorted(to_import_folder.iterdir()):
+        if (not candidate.is_file()
+                or candidate.name.startswith('.')
+                or candidate.name in already_imported):
+            continue
+        if candidate.suffix.lower() in ALLOWED_SUFFIXES:
+            files.append(candidate)
+        else:
+            ignored.append(candidate.name)
+
+    # Named rather than passed over in silence, so a report saved under an
+    # unexpected extension does not look like it was imported.
+    if ignored:
+        print('Ignored, not %s: %s'
+              % (' or '.join(sorted(ALLOWED_SUFFIXES)), ', '.join(ignored)))
 
     if not files:
         print('Nothing to import in %s' % to_import_folder)
@@ -223,27 +263,33 @@ def main(argv=None):
     success = 0
     updates = 0
     failures = 0
-    unreadable = []
+    left_behind = []
     start_time = datetime.datetime.now()
 
     with sqlite3.connect(database_path) as database:
         setup_db(database, args.table)
         for file_path in files:
-            # One unreadable file should not abandon the files after it.  Its
+            # One unusable file should not abandon the files after it.  Its
             # partial writes are rolled back and it stays in to_import/.
             try:
+                check_format(file_path)
                 imported, refreshed, failed = import_file(
                     database, args.table, file_path
                 )
-            except (UnicodeDecodeError, csv.Error) as error:
+            except (UnicodeDecodeError, csv.Error, FormatError) as error:
                 database.rollback()
-                unreadable.append(file_path.name)
-                print('    not a text report, skipped (%s)' % error)
+                left_behind.append(file_path.name)
+                print('%s skipped: %s' % (file_path.name, error))
                 continue
             success += imported
             updates += refreshed
             failures += failed
-            if not args.keep:
+            if not imported and not refreshed:
+                # Nothing reached the table, so the file is not imported in any
+                # useful sense.  Moving it would make it look dealt with.
+                left_behind.append(file_path.name)
+                print('    no rows imported, left in to_import/')
+            elif not args.keep:
                 file_path.replace(imported_folder / file_path.name)
 
     elapsed = (datetime.datetime.now() - start_time).total_seconds()
@@ -252,8 +298,8 @@ def main(argv=None):
     print('Time to import = %.1f seconds' % elapsed)
     print('Success = %d, Updated = %d, Failures = %d, ratio = %.7f'
           % (success, updates, failures, ratio))
-    if unreadable:
-        print('Left in %s: %s' % (to_import_folder, ', '.join(unreadable)))
+    if left_behind:
+        print('Left in %s: %s' % (to_import_folder, ', '.join(left_behind)))
         return 1
     return 0
 
