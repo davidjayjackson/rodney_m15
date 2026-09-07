@@ -11,10 +11,13 @@ JD 2455500.76.
 
 | Path | |
 |---|---|
+| `import_NGC7078_Sloan_SG.py` | the importer |
 | `to_import/` | drop new report files here |
 | `imported/` | files are moved here once loaded |
-| `NGC7078.sqlite` | the database (not in git) |
-| `import_NGC7078_Sloan_SG.py` | the importer |
+| `NGC7078.sqlite` | the database — generated, not in git |
+| `branding/` | logo, banner, and the script that draws them |
+| `HANDOVER.md` | note describing the conversion and what to watch for |
+| `.venv/` | virtual environment — created by you, not in git |
 
 ## Setup
 
